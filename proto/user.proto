@@ -1,5 +1,6 @@
 syntax = "proto3";
-option go_package =  "/user";
+
+option go_package = "./proto";
 
 message Address {
     string street = 1;
@@ -22,8 +23,4 @@ message User {
     string occupation = 7;
     string company = 8;
     bool is_active = 9;
-}
-
-message Users{
-    repeated User users = 1;
 }

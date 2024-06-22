@@ -1,37 +1,39 @@
-package handler
+package main
 
 import (
 	"database/sql"
-	"io"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 
-	pb "homework47/user"
-
 	"github.com/gorilla/mux"
-	"google.golang.org/protobuf/encoding/protojson"
+	_ "github.com/lib/pq"
 	"google.golang.org/protobuf/proto"
+
+
+	pb "47HW/proto"
 )
 
-type Handler struct {
-	db *sql.DB
-}
+var db *sql.DB
 
-func HandlerREPO(db *sql.DB) *Handler {
-	return &Handler{db}
-}
-
-func (h *Handler) CreateUserHandler(w http.ResponseWriter, r *http.Request) {
-	var user pb.User
-	readBody, err := io.ReadAll(r.Body)
+func initDB() {
+	var err error
+	db, err = sql.Open("postgres", "user=postgres password=vakhaboff dbname=shaxboz sslmode=disable")
 	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func createUserHandler(w http.ResponseWriter, r *http.Request) {
+	var user pb.User
+	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	protojson.Unmarshal(readBody, &user)
 
-	_, err = proto.Marshal(&user)
+	_, err := proto.Marshal(&user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -39,22 +41,18 @@ func (h *Handler) CreateUserHandler(w http.ResponseWriter, r *http.Request) {
 
 	query := `INSERT INTO users (name, age, email, address, phone_numbers, occupation, company, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`
 	var id int
-	err = h.db.QueryRow(query, user.Name, user.Age, user.Email, user.Address, user.PhoneNumbers, user.Occupation, user.Company, user.IsActive).Scan(&id)
+	err = db.QueryRow(query, user.Name, user.Age, user.Email, user.Address, user.PhoneNumbers, user.Occupation, user.Company, user.IsActive).Scan(&id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	user.Id = int32(id)
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	data, err := protojson.Marshal(&user)
-	if err != nil {
-		log.Fatal(err)
-	}
-	w.Write(data)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
 }
 
-func (h *Handler) GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
+func getUserByIDHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, err := strconv.Atoi(vars["id"])
 	if err != nil {
@@ -64,7 +62,7 @@ func (h *Handler) GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	var user pb.User
 	query := `SELECT id, name, age, email, address, phone_numbers, occupation, company, is_active FROM users WHERE id = $1`
-	row := h.db.QueryRow(query, id)
+	row := db.QueryRow(query, id)
 	err = row.Scan(&user.Id, &user.Name, &user.Age, &user.Email, &user.Address, &user.PhoneNumbers, &user.Occupation, &user.Company, &user.IsActive)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -75,17 +73,13 @@ func (h *Handler) GetUserByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	data, err := protojson.Marshal(&user)
-	if err != nil {
-		log.Fatal(err)
-	}
-	w.Write(data)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
 }
 
-func (h *Handler) GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
+func getAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT id, name, age, email, address, phone_numbers, occupation, company, is_active FROM users`
-	rows, err := h.db.Query(query)
+	rows, err := db.Query(query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -103,12 +97,18 @@ func (h *Handler) GetAllUsersHandler(w http.ResponseWriter, r *http.Request) {
 		users = append(users, &user)
 	}
 
-	w.Header().Set("Content-Type", "application/x-protobuf")
-	userMSG := &pb.Users{Users: users}
-	jsonBytes, err := protojson.Marshal(userMSG)
-	if err != nil{
-		log.Fatal(err)
-	}
-	
-	w.Write(jsonBytes)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(users)
+}
+
+func main() {
+	initDB()
+
+	r := mux.NewRouter()
+	r.HandleFunc("/users", createUserHandler).Methods("POST")
+	r.HandleFunc("/users/{id}", getUserByIDHandler).Methods("GET")
+	r.HandleFunc("/users", getAllUsersHandler).Methods("GET")
+
+	fmt.Println("Listening on port 8080...")
+	log.Fatal(http.ListenAndServe(":8080", r))
 }
